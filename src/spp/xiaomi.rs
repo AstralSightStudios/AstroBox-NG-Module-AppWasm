@@ -1,10 +1,10 @@
-use async_channel::{unbounded, Receiver, Sender};
+use async_channel::{Receiver, Sender, unbounded};
 use js_sys::{JsString, Reflect, Uint8Array};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{
-    window, Navigator, ReadableStream, ReadableStreamDefaultReader, Serial, SerialOptions,
-    SerialPort, SerialPortRequestOptions, WritableStream, WritableStreamDefaultWriter,
+    Navigator, ReadableStream, ReadableStreamDefaultReader, Serial, SerialOptions, SerialPort,
+    SerialPortRequestOptions, WritableStream, WritableStreamDefaultWriter, window,
 };
 
 #[wasm_bindgen]
