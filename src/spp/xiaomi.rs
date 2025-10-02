@@ -1,10 +1,10 @@
-use async_channel::{Receiver, Sender, unbounded};
+use async_channel::{unbounded, Receiver, Sender};
 use js_sys::{JsString, Reflect, Uint8Array};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{
-    Navigator, ReadableStream, ReadableStreamDefaultReader, Serial, SerialOptions, SerialPort,
-    SerialPortRequestOptions, WritableStream, WritableStreamDefaultWriter, window,
+    window, Navigator, ReadableStream, ReadableStreamDefaultReader, Serial, SerialOptions,
+    SerialPort, SerialPortRequestOptions, WritableStream, WritableStreamDefaultWriter,
 };
 
 #[wasm_bindgen]
@@ -115,7 +115,8 @@ impl XiaomiSpp {
                 }
             },
         )
-        .await;
+        .await
+        .map_err(|err| JsValue::from_str(&err.to_string()))?;
 
         wasm_bindgen_futures::spawn_local(async move {
             loop {
