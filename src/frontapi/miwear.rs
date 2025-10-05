@@ -8,20 +8,12 @@ use corelib::device::DeviceConnectionInfo;
 use corelib::ecs::entity::EntityExt;
 use corelib::ecs::logic_component::LogicComponent;
 use once_cell::sync::OnceCell;
-use serde::{Deserialize, Serialize};
 use serde_wasm_bindgen::to_value as to_js_value;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::spawn_local;
 
 use crate::spp::xiaomi::XiaomiSpp;
-
-#[derive(Serialize, Deserialize)]
-struct PairDeviceResponse {
-    paired: bool,
-    name: Option<String>,
-    addr_hint: Option<String>,
-}
 
 static CORE_INIT: OnceCell<()> = OnceCell::new();
 
@@ -151,36 +143,6 @@ pub async fn miwear_disconnect(addr: String) -> Result<(), JsValue> {
     }
     notify_disconnected(addr).await;
     Ok(())
-}
-
-#[wasm_bindgen]
-pub async fn miwear_pair_device() -> Result<JsValue, JsValue> {
-    ensure_core_initialized();
-    let resp = match XiaomiSpp::ensure_bluetooth_pairing().await {
-        Ok(Some((name, addr))) => PairDeviceResponse {
-            paired: true,
-            name: if name.is_empty() { None } else { Some(name) },
-            addr_hint: if addr.is_empty() { None } else { Some(addr) },
-        },
-        Ok(None) => PairDeviceResponse {
-            paired: false,
-            name: None,
-            addr_hint: None,
-        },
-        Err(err) => {
-            web_sys::console::warn_1(&JsValue::from_str(&format!(
-                "[wasm] miwear_pair_device failed: {:?}",
-                err
-            )));
-            PairDeviceResponse {
-                paired: false,
-                name: None,
-                addr_hint: None,
-            }
-        }
-    };
-
-    to_js_value(&resp).map_err(|err| JsValue::from_str(&err.to_string()))
 }
 
 #[wasm_bindgen]
