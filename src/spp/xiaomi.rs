@@ -1,21 +1,35 @@
 use std::rc::Rc;
 
 use async_channel::{unbounded, Receiver, Sender};
+use corelib::asyncrt::Duration;
 use corelib::device::xiaomi::r#type::ConnectType;
 use corelib::device::{self, DeviceConnectionInfo};
 use js_sys::{Array, Function, Object, Promise, Reflect, Uint8Array};
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{
-    window, BluetoothDevice, Navigator, ReadableStream, ReadableStreamDefaultReader, Serial,
-    SerialOptions, SerialPort, SerialPortInfo, SerialPortRequestOptions, WritableStream,
-    WritableStreamDefaultWriter,
+    window, BluetoothDevice, BluetoothRemoteGattCharacteristic, BluetoothRemoteGattService,
+    Navigator, ReadableStream, ReadableStreamDefaultReader, Serial, SerialOptions, SerialPort,
+    SerialPortInfo, SerialPortRequestOptions, WritableStream, WritableStreamDefaultWriter,
 };
 
 const NAME_PREFIXES: &[&str] = &[
     "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S",
     "T", "U", "V", "W", "X", "Y", "Z", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l",
     "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
+];
+
+const SERVICE_UUID_CANDIDATES: &[&str] = &[
+    "00001101-0000-1000-8000-00805f9b34fb",
+    "6e400001-b5a3-f393-e0a9-e50e24dcca9e",
+    "0000ffe0-0000-1000-8000-00805f9b34fb",
+];
+
+const CHARACTERISTIC_UUID_CANDIDATES: &[&str] = &[
+    "00001101-0000-1000-8000-00805f9b34fb",
+    "6e400002-b5a3-f393-e0a9-e50e24dcca9e",
+    "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+    "0000ffe1-0000-1000-8000-00805f9b34fb",
 ];
 
 fn read_optional_string(info: &JsValue, key: &str) -> Option<String> {
@@ -101,14 +115,55 @@ impl XiaomiSpp {
         let device_id = device.id();
 
         if let Some(gatt) = device.gatt() {
+            let mut connected_here = false;
             if !gatt.connected() {
                 let connect_promise = gatt.connect();
-                if let Err(err) = JsFuture::from(connect_promise).await {
-                    web_sys::console::warn_1(&JsValue::from_str(&format!(
-                        "[wasm] WebBluetooth connect promise rejected: {:?}",
-                        err
-                    )));
+                match JsFuture::from(connect_promise).await {
+                    Ok(_) => connected_here = true,
+                    Err(err) => {
+                        web_sys::console::warn_1(&JsValue::from_str(&format!(
+                            "[wasm] WebBluetooth connect promise rejected: {:?}",
+                            err
+                        )));
+                    }
                 }
+            }
+
+            if gatt.connected() {
+                for service_id in SERVICE_UUID_CANDIDATES {
+                    let service_promise = gatt.get_primary_service_with_str(service_id);
+                    let Ok(service_js) = JsFuture::from(service_promise).await else {
+                        continue;
+                    };
+                    let Ok(service) = service_js.dyn_into::<BluetoothRemoteGattService>() else {
+                        continue;
+                    };
+
+                    for char_id in CHARACTERISTIC_UUID_CANDIDATES {
+                        let char_promise = service.get_characteristic_with_str(char_id);
+                        let Ok(char_js) = JsFuture::from(char_promise).await else {
+                            continue;
+                        };
+                        let Ok(characteristic) =
+                            char_js.dyn_into::<BluetoothRemoteGattCharacteristic>()
+                        else {
+                            continue;
+                        };
+
+                        let data = [0u8];
+                        let value = Uint8Array::from(&data[..]);
+                        if let Ok(write_promise) = characteristic.write_value_with_u8_array(&value)
+                        {
+                            let _ = JsFuture::from(write_promise).await;
+                        }
+                    }
+                }
+
+                corelib::asyncrt::sleep(Duration::from_millis(500)).await;
+            }
+
+            if connected_here && gatt.connected() {
+                gatt.disconnect();
             }
         }
 
