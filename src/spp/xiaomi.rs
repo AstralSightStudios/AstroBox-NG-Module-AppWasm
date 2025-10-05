@@ -1,15 +1,22 @@
 use std::rc::Rc;
 
-use async_channel::{Receiver, Sender, unbounded};
+use async_channel::{unbounded, Receiver, Sender};
 use corelib::device::xiaomi::r#type::ConnectType;
 use corelib::device::{self, DeviceConnectionInfo};
-use js_sys::{Reflect, Uint8Array};
+use js_sys::{Array, Function, Object, Promise, Reflect, Uint8Array};
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{
-    Navigator, ReadableStream, ReadableStreamDefaultReader, Serial, SerialOptions, SerialPort,
-    SerialPortInfo, SerialPortRequestOptions, WritableStream, WritableStreamDefaultWriter, window,
+    window, BluetoothDevice, Navigator, ReadableStream, ReadableStreamDefaultReader, Serial,
+    SerialOptions, SerialPort, SerialPortInfo, SerialPortRequestOptions, WritableStream,
+    WritableStreamDefaultWriter,
 };
+
+const NAME_PREFIXES: &[&str] = &[
+    "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S",
+    "T", "U", "V", "W", "X", "Y", "Z", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l",
+    "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
+];
 
 fn read_optional_string(info: &JsValue, key: &str) -> Option<String> {
     Reflect::get(info, &JsValue::from_str(key))
@@ -35,6 +42,79 @@ pub struct XiaomiSpp {
 }
 
 impl XiaomiSpp {
+    pub(crate) async fn ensure_bluetooth_pairing() -> Result<Option<(String, String)>, JsValue> {
+        let Some(win) = window() else {
+            return Ok(None);
+        };
+        let navigator = win.navigator();
+        let bluetooth_value = Reflect::get(navigator.as_ref(), &JsValue::from_str("bluetooth"))?;
+        if bluetooth_value.is_undefined() || bluetooth_value.is_null() {
+            web_sys::console::warn_1(&JsValue::from_str(
+                "[wasm] WebBluetooth unavailable, skipping BLE pairing step",
+            ));
+            return Ok(None);
+        }
+
+        let bluetooth: web_sys::Bluetooth = bluetooth_value.dyn_into()?;
+        let request_fn_value =
+            Reflect::get(bluetooth.as_ref(), &JsValue::from_str("requestDevice"))?;
+        let request_fn: Function = request_fn_value.dyn_into()?;
+
+        let filters = Array::new();
+        for prefix in NAME_PREFIXES {
+            let filter = Object::new();
+            Reflect::set(
+                &filter,
+                &JsValue::from_str("namePrefix"),
+                &JsValue::from_str(prefix),
+            )?;
+            filters.push(&filter);
+        }
+
+        let options = Object::new();
+        Reflect::set(&options, &JsValue::from_str("filters"), &filters.into())?;
+
+        let promise_js = request_fn.call1(bluetooth.as_ref(), &options)?;
+        let promise: Promise = promise_js.dyn_into()?;
+        let device_js = match JsFuture::from(promise).await {
+            Ok(val) => val,
+            Err(err) => {
+                web_sys::console::warn_1(&JsValue::from_str(&format!(
+                    "[wasm] WebBluetooth requestDevice rejected: {:?}",
+                    err
+                )));
+                return Ok(None);
+            }
+        };
+        let device: BluetoothDevice = match device_js.dyn_into() {
+            Ok(dev) => dev,
+            Err(err) => {
+                web_sys::console::warn_1(&JsValue::from_str(&format!(
+                    "[wasm] Failed to cast BluetoothDevice: {:?}",
+                    err
+                )));
+                return Ok(None);
+            }
+        };
+
+        let device_name = device.name().unwrap_or_default();
+        let device_id = device.id();
+
+        if let Some(gatt) = device.gatt() {
+            if !gatt.connected() {
+                let connect_promise = gatt.connect();
+                if let Err(err) = JsFuture::from(connect_promise).await {
+                    web_sys::console::warn_1(&JsValue::from_str(&format!(
+                        "[wasm] WebBluetooth connect promise rejected: {:?}",
+                        err
+                    )));
+                }
+            }
+        }
+
+        Ok(Some((device_name, device_id)))
+    }
+
     pub async fn new(baud_rate: Option<u32>) -> Result<Self, JsValue> {
         let nav: Navigator = window().unwrap().navigator();
         let serial: Serial = nav.serial();
@@ -113,7 +193,13 @@ impl XiaomiSpp {
         wasm_bindgen_futures::spawn_local(async move {
             while let Ok(data) = rx.recv().await {
                 let chunk = Uint8Array::from(data.as_slice());
-                let _ = JsFuture::from(writer_handle.write_with_chunk(&chunk)).await;
+                if let Err(err) = JsFuture::from(writer_handle.write_with_chunk(&chunk)).await {
+                    web_sys::console::warn_1(&JsValue::from_str(&format!(
+                        "[wasm] Failed to write to serial port: {:?}",
+                        err
+                    )));
+                    break;
+                }
             }
         });
 
@@ -125,7 +211,7 @@ impl XiaomiSpp {
             name = self
                 .device_label
                 .clone()
-                .unwrap_or_else(|| "MiWear Device".to_string());
+                .unwrap_or_else(|| "Bluetooth Device".to_string());
         }
 
         let final_addr = if addr_hint.trim().is_empty() {
@@ -134,38 +220,14 @@ impl XiaomiSpp {
             addr_hint
         };
 
-        let device_info = device::create_miwear_device(
-            handle.clone(),
-            name.clone(),
-            final_addr.clone(),
-            authkey,
-            sar_version,
-            connect_type,
-            false,
-            {
-                let tx = tx.clone();
-                move |data: Vec<u8>| {
-                    let tx = tx.clone();
-                    async move {
-                        log::info!("[wasm] Send: {}", corelib::tools::to_hex_string(&data));
-                        let _ = tx.send(data).await;
-                        Ok(())
-                    }
-                }
-            },
-        )
-        .await
-        .map_err(|err| JsValue::from_str(&err.to_string()))?;
-
-        self.runtime = Some(runtime);
-
         let packet_handle = handle.clone();
         let disconnect_handle = disconnect_cb.clone();
         let device_id_for_loop = final_addr.clone();
+        let reader_for_loop = reader.clone();
 
         wasm_bindgen_futures::spawn_local(async move {
             loop {
-                let read_res = JsFuture::from(reader.read()).await;
+                let read_res = JsFuture::from(reader_for_loop.read()).await;
                 let Ok(val) = read_res else {
                     disconnect_handle(device_id_for_loop.clone());
                     break;
@@ -177,7 +239,7 @@ impl XiaomiSpp {
                     .unwrap_or(false);
 
                 if done {
-                    let _ = reader.release_lock();
+                    let _ = reader_for_loop.release_lock();
                     disconnect_handle(device_id_for_loop.clone());
                     break;
                 }
@@ -198,6 +260,43 @@ impl XiaomiSpp {
                 );
             }
         });
+
+        let device_info_res = device::create_miwear_device(
+            handle.clone(),
+            name.clone(),
+            final_addr.clone(),
+            authkey,
+            sar_version,
+            connect_type,
+            false,
+            {
+                let tx = tx.clone();
+                move |data: Vec<u8>| {
+                    let tx = tx.clone();
+                    async move {
+                        log::info!("[wasm] Send: {}", corelib::tools::to_hex_string(&data));
+                        let _ = tx.send(data).await;
+                        Ok(())
+                    }
+                }
+            },
+        )
+        .await;
+
+        let device_info = match device_info_res {
+            Ok(info) => info,
+            Err(err) => {
+                web_sys::console::error_1(&JsValue::from_str(&format!(
+                    "[wasm] create_miwear_device failed: {}",
+                    err
+                )));
+                let _ = reader.release_lock();
+                let _ = JsFuture::from(self.port.close()).await;
+                return Err(JsValue::from_str(&err.to_string()));
+            }
+        };
+
+        self.runtime = Some(runtime);
 
         Ok(device_info)
     }

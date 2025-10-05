@@ -1,19 +1,27 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use corelib::device::DeviceConnectionInfo;
-use corelib::device::xiaomi::XiaomiDevice;
 use corelib::device::xiaomi::components::info::{InfoComponent, InfoSystem};
 use corelib::device::xiaomi::components::resource::{ResourceComponent, ResourceSystem};
 use corelib::device::xiaomi::r#type::ConnectType;
+use corelib::device::xiaomi::XiaomiDevice;
+use corelib::device::DeviceConnectionInfo;
 use corelib::ecs::entity::EntityExt;
 use corelib::ecs::logic_component::LogicComponent;
 use once_cell::sync::OnceCell;
+use serde::{Deserialize, Serialize};
 use serde_wasm_bindgen::to_value as to_js_value;
-use wasm_bindgen::JsValue;
 use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::spawn_local;
 
 use crate::spp::xiaomi::XiaomiSpp;
+
+#[derive(Serialize, Deserialize)]
+struct PairDeviceResponse {
+    paired: bool,
+    name: Option<String>,
+    addr_hint: Option<String>,
+}
 
 static CORE_INIT: OnceCell<()> = OnceCell::new();
 
@@ -75,6 +83,18 @@ async fn notify_disconnected(addr: String) {
     }
 }
 
+async fn disconnect_all_sessions() {
+    let sessions = SESSIONS.with(|cell| {
+        let mut map = cell.borrow_mut();
+        map.drain().collect::<Vec<(String, XiaomiSpp)>>()
+    });
+
+    for (addr, session) in sessions {
+        let _ = session.disconnect().await;
+        notify_disconnected(addr).await;
+    }
+}
+
 async fn handle_remote_disconnect(addr: String) {
     SESSIONS.with(|cell| {
         cell.borrow_mut().remove(&addr);
@@ -98,6 +118,8 @@ pub async fn miwear_connect(
     connect_type: String,
 ) -> Result<JsValue, JsValue> {
     ensure_core_initialized();
+
+    disconnect_all_sessions().await;
 
     let mut session = XiaomiSpp::new(None).await?;
     let ct = connect_type_from_str(&connect_type);
@@ -129,6 +151,36 @@ pub async fn miwear_disconnect(addr: String) -> Result<(), JsValue> {
     }
     notify_disconnected(addr).await;
     Ok(())
+}
+
+#[wasm_bindgen]
+pub async fn miwear_pair_device() -> Result<JsValue, JsValue> {
+    ensure_core_initialized();
+    let resp = match XiaomiSpp::ensure_bluetooth_pairing().await {
+        Ok(Some((name, addr))) => PairDeviceResponse {
+            paired: true,
+            name: if name.is_empty() { None } else { Some(name) },
+            addr_hint: if addr.is_empty() { None } else { Some(addr) },
+        },
+        Ok(None) => PairDeviceResponse {
+            paired: false,
+            name: None,
+            addr_hint: None,
+        },
+        Err(err) => {
+            web_sys::console::warn_1(&JsValue::from_str(&format!(
+                "[wasm] miwear_pair_device failed: {:?}",
+                err
+            )));
+            PairDeviceResponse {
+                paired: false,
+                name: None,
+                addr_hint: None,
+            }
+        }
+    };
+
+    to_js_value(&resp).map_err(|err| JsValue::from_str(&err.to_string()))
 }
 
 #[wasm_bindgen]

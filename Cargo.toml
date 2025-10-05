@@ -21,6 +21,8 @@ web-sys = { version = "0.3", features = [
   "Serial", "SerialPort", "SerialOptions", "SerialPortInfo",
   "SerialPortRequestOptions", "SerialOutputSignals",
 
+  "Bluetooth", "BluetoothDevice", "BluetoothRemoteGattServer",
+
   "ReadableStream", "ReadableStreamDefaultReader",
   "WritableStream", "WritableStreamDefaultWriter",
   "TextDecoder", "TextEncoder"
