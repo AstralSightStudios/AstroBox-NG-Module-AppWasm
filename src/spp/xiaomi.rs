@@ -172,7 +172,7 @@ impl XiaomiSpp {
                 }
 
                 let data: Vec<u8> = Uint8Array::new(&chunk).to_vec();
-                log::info!("[wasm] Recv: {}", corelib::tools::to_hex_string(&data));
+                //log::info!("[wasm] Recv: {}", corelib::tools::to_hex_string(&data));
                 corelib::device::xiaomi::packet::on_packet(
                     packet_handle.clone(),
                     device_id_for_loop.clone(),
@@ -194,7 +194,7 @@ impl XiaomiSpp {
                 move |data: Vec<u8>| {
                     let tx = tx.clone();
                     async move {
-                        log::info!("[wasm] Send: {}", corelib::tools::to_hex_string(&data));
+                        //log::info!("[wasm] Send: {}", corelib::tools::to_hex_string(&data));
                         let _ = tx.send(data).await;
                         Ok(())
                     }

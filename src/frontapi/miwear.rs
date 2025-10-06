@@ -276,6 +276,7 @@ pub async fn miwear_get_quick_apps(addr: String) -> Result<JsValue, JsValue> {
     to_js_value(&list).map_err(|err| JsValue::from_str(&err.to_string()))
 }
 
+#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub async fn miwear_install(
     addr: String,
@@ -322,7 +323,7 @@ pub async fn miwear_install(
 
     if let Some(callback) = progress_cb.clone() {
         spawn_local(async move {
-            let mut receiver = progress_rx;
+            let receiver = progress_rx;
             while let Ok(payload) = receiver.recv().await {
                 match to_js_value(&payload) {
                     Ok(js_payload) => {
@@ -349,12 +350,14 @@ pub async fn miwear_install(
     result
 }
 
+#[cfg(target_arch = "wasm32")]
 async fn with_miwear_device_mut<F, R>(addr: &str, f: F) -> Result<R, String>
 where
-    F: FnOnce(&mut XiaomiDevice) -> Result<R, String> + Send + 'static,
-    R: Send + 'static,
+    F: FnOnce(&mut XiaomiDevice) -> Result<R, String> + 'static,
+    R: 'static,
 {
     let owned = addr.to_string();
+
     corelib::ecs::with_rt_mut(move |rt| {
         if let Some(device) = rt.find_entity_by_id_mut::<XiaomiDevice>(&owned) {
             f(device)
