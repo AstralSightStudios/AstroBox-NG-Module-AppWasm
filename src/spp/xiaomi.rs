@@ -1,14 +1,14 @@
 use std::rc::Rc;
 
-use async_channel::{unbounded, Receiver, Sender};
+use async_channel::{Receiver, Sender, unbounded};
 use corelib::device::xiaomi::r#type::ConnectType;
 use corelib::device::{self, DeviceConnectionInfo};
 use js_sys::{Reflect, Uint8Array};
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{
-    window, Navigator, ReadableStream, ReadableStreamDefaultReader, Serial, SerialOptions,
-    SerialPort, SerialPortInfo, SerialPortRequestOptions, WritableStream, WritableStreamDefaultWriter,
+    Navigator, ReadableStream, ReadableStreamDefaultReader, Serial, SerialOptions, SerialPort,
+    SerialPortInfo, SerialPortRequestOptions, WritableStream, WritableStreamDefaultWriter, window,
 };
 
 fn read_optional_string(info: &JsValue, key: &str) -> Option<String> {

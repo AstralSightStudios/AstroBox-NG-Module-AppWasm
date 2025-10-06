@@ -1,16 +1,21 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
 
-use corelib::device::xiaomi::components::info::{InfoComponent, InfoSystem};
-use corelib::device::xiaomi::components::resource::{ResourceComponent, ResourceSystem};
-use corelib::device::xiaomi::r#type::ConnectType;
-use corelib::device::xiaomi::XiaomiDevice;
+use async_channel::unbounded;
 use corelib::device::DeviceConnectionInfo;
+use corelib::device::xiaomi::XiaomiDevice;
+use corelib::device::xiaomi::components::info::{InfoComponent, InfoSystem};
+use corelib::device::xiaomi::components::install::{InstallComponent, InstallSystem};
+use corelib::device::xiaomi::components::mass::SendMassCallbackData;
+use corelib::device::xiaomi::components::resource::{ResourceComponent, ResourceSystem};
+use corelib::device::xiaomi::packet::mass::MassDataType;
+use corelib::device::xiaomi::r#type::ConnectType;
 use corelib::ecs::entity::EntityExt;
 use corelib::ecs::logic_component::LogicComponent;
+use js_sys::{Function, Uint8Array};
 use once_cell::sync::OnceCell;
 use serde_wasm_bindgen::to_value as to_js_value;
-use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsValue;
+use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 
 use crate::spp::xiaomi::XiaomiSpp;
@@ -273,17 +278,89 @@ pub async fn miwear_get_quick_apps(addr: String) -> Result<JsValue, JsValue> {
 
 #[wasm_bindgen]
 pub async fn miwear_install(
-    _addr: String,
-    _res_type: String,
-    _file_path: String,
-    _package_name: Option<String>,
+    addr: String,
+    res_type: u8,
+    data: Uint8Array,
+    package_name: Option<String>,
+    progress_cb: Option<Function>,
 ) -> Result<(), JsValue> {
-    Err(JsValue::from_str(
-        "miwear_install is not supported in wasm runtime",
-    ))
+    ensure_core_initialized();
+
+    let data_type = MassDataType::try_from(res_type).map_err(|err| JsValue::from_str(err))?;
+    let file_data = data.to_vec();
+
+    let (progress_tx, progress_rx) = unbounded::<SendMassCallbackData>();
+    let progress_notifier = {
+        let sender = progress_tx.clone();
+        Arc::new(move |payload: SendMassCallbackData| {
+            let _ = sender.try_send(payload);
+        }) as Arc<dyn Fn(SendMassCallbackData) + Send + Sync>
+    };
+
+    let package_name_clone = package_name.clone();
+    let install_future = with_miwear_device_mut(&addr, move |device| {
+        let install_comp = device
+            .get_component_as_mut::<InstallComponent>(InstallComponent::ID)
+            .map_err(|err| format!("{:?}", err))?;
+        let install_sys = install_comp
+            .system_mut()
+            .as_any_mut()
+            .downcast_mut::<InstallSystem>()
+            .ok_or_else(|| "Install system not found".to_string())?;
+
+        install_sys
+            .send_install_request_with_progress(
+                data_type,
+                file_data,
+                package_name_clone.as_deref(),
+                progress_notifier,
+            )
+            .map_err(|err| err.to_string())
+    })
+    .await
+    .map_err(|err| JsValue::from_str(&err))?;
+
+    if let Some(callback) = progress_cb.clone() {
+        spawn_local(async move {
+            let mut receiver = progress_rx;
+            while let Ok(payload) = receiver.recv().await {
+                match to_js_value(&payload) {
+                    Ok(js_payload) => {
+                        let _ = callback.call1(&JsValue::NULL, &js_payload);
+                    }
+                    Err(err) => {
+                        web_sys::console::error_1(&JsValue::from_str(&format!(
+                            "[wasm] miwear_install progress serialization failed: {}",
+                            err
+                        )));
+                    }
+                }
+            }
+        });
+    } else {
+        drop(progress_rx);
+    }
+
+    let result = install_future
+        .await
+        .map_err(|err| JsValue::from_str(&err.to_string()));
+
+    drop(progress_tx);
+    result
 }
 
-#[wasm_bindgen]
-pub fn app_get_config() -> JsValue {
-    to_js_value(&serde_json::json!({ "disable_auto_clean": false })).unwrap_or(JsValue::NULL)
+async fn with_miwear_device_mut<F, R>(addr: &str, f: F) -> Result<R, String>
+where
+    F: FnOnce(&mut XiaomiDevice) -> Result<R, String> + Send + 'static,
+    R: Send + 'static,
+{
+    let owned = addr.to_string();
+    corelib::ecs::with_rt_mut(move |rt| {
+        if let Some(device) = rt.find_entity_by_id_mut::<XiaomiDevice>(&owned) {
+            f(device)
+        } else {
+            Err("Device not found".to_string())
+        }
+    })
+    .await
 }
