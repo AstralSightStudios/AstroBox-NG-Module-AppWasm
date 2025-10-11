@@ -1,24 +1,38 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
-
+#[cfg(target_arch = "wasm32")]
 use async_channel::unbounded;
 use corelib::device::DeviceConnectionInfo;
 use corelib::device::xiaomi::XiaomiDevice;
 use corelib::device::xiaomi::components::info::{InfoComponent, InfoSystem};
+#[cfg(target_arch = "wasm32")]
 use corelib::device::xiaomi::components::install::{InstallComponent, InstallSystem};
+#[cfg(target_arch = "wasm32")]
 use corelib::device::xiaomi::components::mass::SendMassCallbackData;
 use corelib::device::xiaomi::components::resource::{ResourceComponent, ResourceSystem};
+#[cfg(target_arch = "wasm32")]
+use corelib::device::xiaomi::components::thirdparty_app::{
+    ThirdpartyAppComponent, ThirdpartyAppSystem,
+};
+use corelib::device::xiaomi::components::watchface::{WatchfaceComponent, WatchfaceSystem};
+#[cfg(target_arch = "wasm32")]
 use corelib::device::xiaomi::packet::mass::MassDataType;
 use corelib::device::xiaomi::r#type::ConnectType;
 use corelib::ecs::entity::EntityExt;
 use corelib::ecs::logic_component::LogicComponent;
+#[cfg(target_arch = "wasm32")]
 use js_sys::{Function, Uint8Array};
 use once_cell::sync::OnceCell;
 use serde_wasm_bindgen::to_value as to_js_value;
+#[cfg(target_arch = "wasm32")]
+use std::sync::Arc;
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use wasm_bindgen::JsValue;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 
 use crate::spp::xiaomi::XiaomiSpp;
+
+pub mod thirdparty_app;
+pub mod watchface;
 
 static CORE_INIT: OnceCell<()> = OnceCell::new();
 
@@ -27,7 +41,7 @@ thread_local! {
     static SESSIONS: RefCell<HashMap<String, XiaomiSpp>> = RefCell::new(HashMap::new());
 }
 
-fn ensure_core_initialized() {
+pub(super) fn ensure_core_initialized() {
     CORE_INIT.get_or_init(|| {
         console_error_panic_hook::set_once();
         #[cfg(target_arch = "wasm32")]
@@ -168,7 +182,7 @@ pub async fn miwear_get_connected_devices() -> Result<JsValue, JsValue> {
     to_js_value(&devices).map_err(|err| JsValue::from_str(&err.to_string()))
 }
 
-async fn with_info_system<F, R>(addr: &str, f: F) -> Result<R, String>
+pub(super) async fn with_info_system<F, R>(addr: &str, f: F) -> Result<R, String>
 where
     F: FnOnce(&mut InfoSystem) -> Result<R, String> + Send + 'static,
     R: Send + 'static,
@@ -191,7 +205,7 @@ where
     .await
 }
 
-async fn with_resource_system<F, R>(addr: &str, f: F) -> Result<R, String>
+pub(super) async fn with_resource_system<F, R>(addr: &str, f: F) -> Result<R, String>
 where
     F: FnOnce(&mut ResourceSystem) -> Result<R, String> + Send + 'static,
     R: Send + 'static,
@@ -209,6 +223,72 @@ where
             .as_any_mut()
             .downcast_mut::<ResourceSystem>()
             .ok_or_else(|| "Resource system not found".to_string())?;
+        f(system)
+    })
+    .await
+}
+
+
+pub(super) async fn with_resource_component<F, R>(addr: &str, f: F) -> Result<R, String>
+where
+    F: FnOnce(&ResourceComponent) -> Result<R, String> + Send + 'static,
+    R: Send + 'static,
+{
+    let owned = addr.to_string();
+    corelib::ecs::with_rt_mut(move |rt| {
+        let device = rt
+            .find_entity_by_id_mut::<XiaomiDevice>(&owned)
+            .ok_or_else(|| "Device not found".to_string())?;
+        let component = device
+            .get_component_as_mut::<ResourceComponent>(ResourceComponent::ID)
+            .map_err(|err| format!("{:?}", err))?;
+        f(&*component)
+    })
+    .await
+}
+
+pub(super) async fn with_watchface_system<F, R>(addr: &str, f: F) -> Result<R, String>
+where
+    F: FnOnce(&mut WatchfaceSystem) -> Result<R, String> + Send + 'static,
+    R: Send + 'static,
+{
+    let owned = addr.to_string();
+    corelib::ecs::with_rt_mut(move |rt| {
+        let device = rt
+            .find_entity_by_id_mut::<XiaomiDevice>(&owned)
+            .ok_or_else(|| "Device not found".to_string())?;
+        let component = device
+            .get_component_as_mut::<WatchfaceComponent>(WatchfaceComponent::ID)
+            .map_err(|err| format!("{:?}", err))?;
+        let system = component
+            .system_mut()
+            .as_any_mut()
+            .downcast_mut::<WatchfaceSystem>()
+            .ok_or_else(|| "Watchface system not found".to_string())?;
+        f(system)
+    })
+    .await
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(super) async fn with_thirdparty_app_system<F, R>(addr: &str, f: F) -> Result<R, String>
+where
+    F: FnOnce(&mut ThirdpartyAppSystem) -> Result<R, String> + Send + 'static,
+    R: Send + 'static,
+{
+    let owned = addr.to_string();
+    corelib::ecs::with_rt_mut(move |rt| {
+        let device = rt
+            .find_entity_by_id_mut::<XiaomiDevice>(&owned)
+            .ok_or_else(|| "Device not found".to_string())?;
+        let component = device
+            .get_component_as_mut::<ThirdpartyAppComponent>(ThirdpartyAppComponent::ID)
+            .map_err(|err| format!("{:?}", err))?;
+        let system = component
+            .system_mut()
+            .as_any_mut()
+            .downcast_mut::<ThirdpartyAppSystem>()
+            .ok_or_else(|| "Thirdparty app system not found".to_string())?;
         f(system)
     })
     .await
@@ -250,30 +330,6 @@ pub async fn miwear_get_data(addr: String, data_type: String) -> Result<JsValue,
             "Unsupported data type: {other}"
         ))),
     }
-}
-
-#[wasm_bindgen]
-pub async fn miwear_get_watchfaces(addr: String) -> Result<JsValue, JsValue> {
-    ensure_core_initialized();
-    let rx = with_resource_system(&addr, |sys| Ok(sys.request_watchface_list()))
-        .await
-        .map_err(|err| JsValue::from_str(&err))?;
-    let list = rx
-        .await
-        .map_err(|_| JsValue::from_str("Watchface list response not received"))?;
-    to_js_value(&list).map_err(|err| JsValue::from_str(&err.to_string()))
-}
-
-#[wasm_bindgen]
-pub async fn miwear_get_quick_apps(addr: String) -> Result<JsValue, JsValue> {
-    ensure_core_initialized();
-    let rx = with_resource_system(&addr, |sys| Ok(sys.request_quick_app_list()))
-        .await
-        .map_err(|err| JsValue::from_str(&err))?;
-    let list = rx
-        .await
-        .map_err(|_| JsValue::from_str("Quick app list response not received"))?;
-    to_js_value(&list).map_err(|err| JsValue::from_str(&err.to_string()))
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -351,7 +407,7 @@ pub async fn miwear_install(
 }
 
 #[cfg(target_arch = "wasm32")]
-async fn with_miwear_device_mut<F, R>(addr: &str, f: F) -> Result<R, String>
+pub(super) async fn with_miwear_device_mut<F, R>(addr: &str, f: F) -> Result<R, String>
 where
     F: FnOnce(&mut XiaomiDevice) -> Result<R, String> + 'static,
     R: 'static,
