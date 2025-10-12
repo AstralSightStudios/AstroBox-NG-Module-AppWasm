@@ -1,32 +1,26 @@
-#[cfg(target_arch = "wasm32")]
 use async_channel::unbounded;
 use corelib::device::DeviceConnectionInfo;
-use corelib::device::xiaomi::XiaomiDevice;
 use corelib::device::xiaomi::components::info::{InfoComponent, InfoSystem};
-#[cfg(target_arch = "wasm32")]
 use corelib::device::xiaomi::components::install::{InstallComponent, InstallSystem};
-#[cfg(target_arch = "wasm32")]
 use corelib::device::xiaomi::components::mass::SendMassCallbackData;
 use corelib::device::xiaomi::components::resource::{ResourceComponent, ResourceSystem};
-#[cfg(target_arch = "wasm32")]
 use corelib::device::xiaomi::components::thirdparty_app::{
     ThirdpartyAppComponent, ThirdpartyAppSystem,
 };
 use corelib::device::xiaomi::components::watchface::{WatchfaceComponent, WatchfaceSystem};
-#[cfg(target_arch = "wasm32")]
 use corelib::device::xiaomi::packet::mass::MassDataType;
 use corelib::device::xiaomi::r#type::ConnectType;
+use corelib::device::xiaomi::XiaomiDevice;
 use corelib::ecs::entity::EntityExt;
 use corelib::ecs::logic_component::LogicComponent;
-#[cfg(target_arch = "wasm32")]
 use js_sys::{Function, Uint8Array};
 use once_cell::sync::OnceCell;
 use serde_wasm_bindgen::to_value as to_js_value;
-#[cfg(target_arch = "wasm32")]
 use std::sync::Arc;
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
-use wasm_bindgen::JsValue;
+use tokio::sync::oneshot;
 use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::spawn_local;
 
 use crate::spp::xiaomi::XiaomiSpp;
@@ -44,7 +38,6 @@ thread_local! {
 pub(super) fn ensure_core_initialized() {
     CORE_INIT.get_or_init(|| {
         console_error_panic_hook::set_once();
-        #[cfg(target_arch = "wasm32")]
         corelib::logger::wasm::init_logger();
         corelib::ecs::init_runtime_default();
     });
@@ -111,6 +104,19 @@ async fn handle_remote_disconnect(addr: String) {
         cell.borrow_mut().remove(&addr);
     });
     notify_disconnected(addr).await;
+}
+
+pub(super) async fn await_result_receiver<T, E>(
+    rx: oneshot::Receiver<Result<T, E>>,
+    missing_msg: &'static str,
+) -> Result<T, JsValue>
+where
+    E: std::fmt::Display,
+{
+    let result = rx
+        .await
+        .map_err(|_| JsValue::from_str(missing_msg))?;
+    result.map_err(|err| JsValue::from_str(&err.to_string()))
 }
 
 #[wasm_bindgen]
@@ -270,7 +276,6 @@ where
     .await
 }
 
-#[cfg(target_arch = "wasm32")]
 pub(super) async fn with_thirdparty_app_system<F, R>(addr: &str, f: F) -> Result<R, String>
 where
     F: FnOnce(&mut ThirdpartyAppSystem) -> Result<R, String> + Send + 'static,
@@ -303,27 +308,22 @@ pub async fn miwear_get_data(addr: String, data_type: String) -> Result<JsValue,
             let rx = with_info_system(&addr, |sys| Ok(sys.request_device_info()))
                 .await
                 .map_err(|err| JsValue::from_str(&err))?;
-            let info = rx
-                .await
-                .map_err(|_| JsValue::from_str("Device info response not received"))?;
+            let info = await_result_receiver(rx, "Device info response not received").await?;
             to_js_value(&info).map_err(|err| JsValue::from_str(&err.to_string()))
         }
         "status" => {
             let rx = with_info_system(&addr, |sys| Ok(sys.request_device_status()))
                 .await
                 .map_err(|err| JsValue::from_str(&err))?;
-            let status = rx
-                .await
-                .map_err(|_| JsValue::from_str("Device status response not received"))?;
+            let status = await_result_receiver(rx, "Device status response not received").await?;
             to_js_value(&status).map_err(|err| JsValue::from_str(&err.to_string()))
         }
         "storage" => {
             let rx = with_info_system(&addr, |sys| Ok(sys.request_device_storage()))
                 .await
                 .map_err(|err| JsValue::from_str(&err))?;
-            let storage = rx
-                .await
-                .map_err(|_| JsValue::from_str("Device storage response not received"))?;
+            let storage =
+                await_result_receiver(rx, "Device storage response not received").await?;
             to_js_value(&storage).map_err(|err| JsValue::from_str(&err.to_string()))
         }
         other => Err(JsValue::from_str(&format!(
@@ -332,7 +332,6 @@ pub async fn miwear_get_data(addr: String, data_type: String) -> Result<JsValue,
     }
 }
 
-#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub async fn miwear_install(
     addr: String,
@@ -406,7 +405,6 @@ pub async fn miwear_install(
     result
 }
 
-#[cfg(target_arch = "wasm32")]
 pub(super) async fn with_miwear_device_mut<F, R>(addr: &str, f: F) -> Result<R, String>
 where
     F: FnOnce(&mut XiaomiDevice) -> Result<R, String> + 'static,
