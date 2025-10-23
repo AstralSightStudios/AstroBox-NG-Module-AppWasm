@@ -1,2 +1,2 @@
 [check]
-targets = ["wasm32-unknown-unknown"]
+#targets = ["wasm32-unknown-unknown"]
