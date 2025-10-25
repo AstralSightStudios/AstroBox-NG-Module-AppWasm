@@ -116,7 +116,7 @@ where
     let result = rx
         .await
         .map_err(|_| JsValue::from_str(missing_msg))?;
-    result.map_err(|err| JsValue::from_str(&err.to_string()))
+    result.map_err(|err| JsValue::from_str(&format!("{:?}", err)))
 }
 
 #[wasm_bindgen]
@@ -154,7 +154,8 @@ pub async fn miwear_connect(
         cell.borrow_mut().insert(device_info.addr.clone(), session);
     });
 
-    let payload = to_js_value(&device_info).map_err(|err| JsValue::from_str(&err.to_string()))?;
+    let payload =
+        to_js_value(&device_info).map_err(|err| JsValue::from_str(&format!("{:?}", err)))?;
     emit_event("device-connected", &payload);
     Ok(payload)
 }
@@ -185,7 +186,7 @@ pub async fn miwear_get_connected_devices() -> Result<JsValue, JsValue> {
     })
     .await;
 
-    to_js_value(&devices).map_err(|err| JsValue::from_str(&err.to_string()))
+    to_js_value(&devices).map_err(|err| JsValue::from_str(&format!("{:?}", err)))
 }
 
 pub(super) async fn with_info_system<F, R>(addr: &str, f: F) -> Result<R, String>
@@ -309,14 +310,14 @@ pub async fn miwear_get_data(addr: String, data_type: String) -> Result<JsValue,
                 .await
                 .map_err(|err| JsValue::from_str(&err))?;
             let info = await_result_receiver(rx, "Device info response not received").await?;
-            to_js_value(&info).map_err(|err| JsValue::from_str(&err.to_string()))
+            to_js_value(&info).map_err(|err| JsValue::from_str(&format!("{:?}", err)))
         }
         "status" => {
             let rx = with_info_system(&addr, |sys| Ok(sys.request_device_status()))
                 .await
                 .map_err(|err| JsValue::from_str(&err))?;
             let status = await_result_receiver(rx, "Device status response not received").await?;
-            to_js_value(&status).map_err(|err| JsValue::from_str(&err.to_string()))
+            to_js_value(&status).map_err(|err| JsValue::from_str(&format!("{:?}", err)))
         }
         "storage" => {
             let rx = with_info_system(&addr, |sys| Ok(sys.request_device_storage()))
@@ -324,7 +325,7 @@ pub async fn miwear_get_data(addr: String, data_type: String) -> Result<JsValue,
                 .map_err(|err| JsValue::from_str(&err))?;
             let storage =
                 await_result_receiver(rx, "Device storage response not received").await?;
-            to_js_value(&storage).map_err(|err| JsValue::from_str(&err.to_string()))
+            to_js_value(&storage).map_err(|err| JsValue::from_str(&format!("{:?}", err)))
         }
         other => Err(JsValue::from_str(&format!(
             "Unsupported data type: {other}"
@@ -371,7 +372,7 @@ pub async fn miwear_install(
                 package_name_clone.as_deref(),
                 progress_notifier,
             )
-            .map_err(|err| err.to_string())
+            .map_err(|err| format!("{:?}", err))
     })
     .await
     .map_err(|err| JsValue::from_str(&err))?;
@@ -399,7 +400,7 @@ pub async fn miwear_install(
 
     let result = install_future
         .await
-        .map_err(|err| JsValue::from_str(&err.to_string()));
+        .map_err(|err| JsValue::from_str(&format!("{:?}", err)));
 
     drop(progress_tx);
     result

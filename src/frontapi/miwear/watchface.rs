@@ -16,7 +16,7 @@ pub async fn watchface_get_list(addr: String) -> Result<JsValue, JsValue> {
         .await
         .map_err(|err| JsValue::from_str(&err))?;
     let list = await_result_receiver(rx, "Watchface list response not received").await?;
-    to_js_value(&list).map_err(|err| JsValue::from_str(&err.to_string()))
+    to_js_value(&list).map_err(|err| JsValue::from_str(&format!("{:?}", err)))
 }
 
 #[wasm_bindgen]
