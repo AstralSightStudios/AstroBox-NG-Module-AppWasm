@@ -115,7 +115,7 @@ where
     E: std::fmt::Display,
 {
     let result = rx.await.map_err(|_| JsValue::from_str(missing_msg))?;
-    result.map_err(|err| JsValue::from_str(&format!("{:?}", err)))
+    result.map_err(|err| JsValue::from_str(&err.to_string()))
 }
 
 #[wasm_bindgen]
