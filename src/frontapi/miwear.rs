@@ -1,5 +1,6 @@
 use async_channel::unbounded;
 use corelib::device::DeviceConnectionInfo;
+use corelib::device::xiaomi::XiaomiDevice;
 use corelib::device::xiaomi::components::info::{InfoComponent, InfoSystem};
 use corelib::device::xiaomi::components::install::{InstallComponent, InstallSystem};
 use corelib::device::xiaomi::components::mass::SendMassCallbackData;
@@ -9,8 +10,8 @@ use corelib::device::xiaomi::components::thirdparty_app::{
 };
 use corelib::device::xiaomi::components::watchface::{WatchfaceComponent, WatchfaceSystem};
 use corelib::device::xiaomi::packet::mass::MassDataType;
+use corelib::device::xiaomi::resutils::{FileType, get_file_type};
 use corelib::device::xiaomi::r#type::ConnectType;
-use corelib::device::xiaomi::XiaomiDevice;
 use corelib::ecs::entity::EntityExt;
 use corelib::ecs::logic_component::LogicComponent;
 use js_sys::{Function, Uint8Array};
@@ -19,8 +20,8 @@ use serde_wasm_bindgen::to_value as to_js_value;
 use std::sync::Arc;
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use tokio::sync::oneshot;
-use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsValue;
+use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 
 use crate::spp::xiaomi::XiaomiSpp;
@@ -113,9 +114,7 @@ pub(super) async fn await_result_receiver<T, E>(
 where
     E: std::fmt::Display,
 {
-    let result = rx
-        .await
-        .map_err(|_| JsValue::from_str(missing_msg))?;
+    let result = rx.await.map_err(|_| JsValue::from_str(missing_msg))?;
     result.map_err(|err| JsValue::from_str(&format!("{:?}", err)))
 }
 
@@ -235,7 +234,6 @@ where
     .await
 }
 
-
 pub(super) async fn with_resource_component<F, R>(addr: &str, f: F) -> Result<R, String>
 where
     F: FnOnce(&ResourceComponent) -> Result<R, String> + Send + 'static,
@@ -323,8 +321,7 @@ pub async fn miwear_get_data(addr: String, data_type: String) -> Result<JsValue,
             let rx = with_info_system(&addr, |sys| Ok(sys.request_device_storage()))
                 .await
                 .map_err(|err| JsValue::from_str(&err))?;
-            let storage =
-                await_result_receiver(rx, "Device storage response not received").await?;
+            let storage = await_result_receiver(rx, "Device storage response not received").await?;
             to_js_value(&storage).map_err(|err| JsValue::from_str(&format!("{:?}", err)))
         }
         other => Err(JsValue::from_str(&format!(
@@ -421,4 +418,19 @@ where
         }
     })
     .await
+}
+
+#[wasm_bindgen]
+pub async fn miwear_get_file_type(file: Uint8Array, name: String) -> u8 {
+    let file_type = get_file_type(&file.to_vec());
+    if file_type == FileType::Zip {
+        // 检查扩展名 abp
+        if let Some(ext) = name.split('.').last() {
+            if ext == "abp" {
+                return FileType::Abp as u8;
+            }
+        }
+    }
+
+    file_type as u8
 }
