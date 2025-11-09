@@ -173,7 +173,7 @@ impl XiaomiSpp {
 
                 let data: Vec<u8> = Uint8Array::new(&chunk).to_vec();
                 //log::info!("[wasm] Recv: {}", corelib::tools::to_hex_string(&data));
-                corelib::device::xiaomi::packet::on_packet(
+                corelib::device::xiaomi::packet::dispatcher::on_packet(
                     packet_handle.clone(),
                     device_id_for_loop.clone(),
                     data,
