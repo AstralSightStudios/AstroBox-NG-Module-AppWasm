@@ -1,12 +1,9 @@
 use serde_wasm_bindgen::to_value as to_js_value;
-use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsValue;
+use wasm_bindgen::prelude::*;
 
 use super::{
-    await_result_receiver,
-    ensure_core_initialized,
-    with_resource_system,
-    with_watchface_system,
+    await_result_receiver, ensure_core_initialized, with_resource_system, with_watchface_system,
 };
 
 #[wasm_bindgen]

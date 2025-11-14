@@ -67,8 +67,8 @@ async fn remove_device_and_get_info(addr: &str) -> Option<DeviceConnectionInfo> 
         let info =
             rt.find_entity_by_id_mut::<XiaomiDevice>(&owned)
                 .map(|dev| DeviceConnectionInfo {
-                    name: dev.name.clone(),
-                    addr: dev.addr.clone(),
+                    name: dev.name().to_string(),
+                    addr: dev.addr().to_string(),
                 });
         rt.remove_entity_by_id(&owned);
         info
@@ -178,8 +178,8 @@ pub async fn miwear_get_connected_devices() -> Result<JsValue, JsValue> {
             .values()
             .filter_map(|entity| entity.as_any().downcast_ref::<XiaomiDevice>())
             .map(|dev| DeviceConnectionInfo {
-                name: dev.name.clone(),
-                addr: dev.addr.clone(),
+                name: dev.name().to_string(),
+                addr: dev.addr().to_string(),
             })
             .collect::<Vec<_>>()
     })
