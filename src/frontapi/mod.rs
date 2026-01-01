@@ -1,3 +1,3 @@
-mod miwear;
+mod device;
 
-pub use miwear::*;
+pub use device::*;

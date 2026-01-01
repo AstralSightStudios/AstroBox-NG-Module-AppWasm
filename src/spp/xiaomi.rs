@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use async_channel::{Receiver, Sender, unbounded};
 use corelib::device::xiaomi::r#type::ConnectType;
-use corelib::device::{self, DeviceConnectionInfo};
+use corelib::device::{self, DeviceConnectionInfo, DeviceKind};
 use js_sys::{Reflect, Uint8Array};
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
@@ -181,8 +181,9 @@ impl XiaomiSpp {
             }
         });
 
-        let device_info_res = device::create_miwear_device(
+        let device_info_res = device::create_device(
             handle.clone(),
+            DeviceKind::Xiaomi,
             name.clone(),
             final_addr.clone(),
             authkey,
@@ -207,7 +208,7 @@ impl XiaomiSpp {
             Ok(info) => info,
             Err(err) => {
                 web_sys::console::error_1(&JsValue::from_str(&format!(
-                    "[wasm] create_miwear_device failed: {}",
+                    "[wasm] create_device failed: {}",
                     err
                 )));
                 let _ = reader.release_lock();

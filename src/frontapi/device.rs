@@ -1,6 +1,5 @@
 use async_channel::unbounded;
-use corelib::device::DeviceConnectionInfo;
-use corelib::device::xiaomi::XiaomiDevice;
+use corelib::device::{cleanup_device_state, Device, DeviceConnectionInfo};
 use corelib::device::xiaomi::components::info::InfoSystem;
 use corelib::device::xiaomi::components::install::InstallSystem;
 use corelib::device::xiaomi::components::mass::SendMassCallbackData;
@@ -59,17 +58,27 @@ fn connect_type_from_str(value: &str) -> ConnectType {
 
 async fn remove_device_and_get_info(addr: &str) -> Option<DeviceConnectionInfo> {
     let owned = addr.to_string();
-    corelib::ecs::with_rt_mut(move |rt| {
-        let info =
-            rt.component_ref::<XiaomiDevice>(&owned)
-                .map(|dev| DeviceConnectionInfo {
+    let info = corelib::ecs::with_rt_mut(move |rt| {
+        let info = rt.component_ref::<Device>(&owned).map(|dev| {
+            (
+                DeviceConnectionInfo {
                     name: dev.name().to_string(),
                     addr: dev.addr().to_string(),
-                });
+                },
+                dev.kind(),
+            )
+        });
         rt.remove_device(&owned);
         info
     })
-    .await
+    .await;
+
+    if let Some((info, kind)) = info {
+        cleanup_device_state(kind, addr);
+        Some(info)
+    } else {
+        None
+    }
 }
 
 async fn notify_disconnected(addr: String) {
@@ -122,7 +131,7 @@ pub fn register_event_sink(callback: js_sys::Function) {
 }
 
 #[wasm_bindgen]
-pub async fn miwear_connect(
+pub async fn device_connect(
     name: String,
     addr: String,
     authkey: String,
@@ -156,7 +165,7 @@ pub async fn miwear_connect(
 }
 
 #[wasm_bindgen]
-pub async fn miwear_disconnect(addr: String) -> Result<(), JsValue> {
+pub async fn device_disconnect(addr: String) -> Result<(), JsValue> {
     ensure_core_initialized();
     let removed = SESSIONS.with(|cell| cell.borrow_mut().remove(&addr));
     if let Some(session) = removed {
@@ -167,12 +176,12 @@ pub async fn miwear_disconnect(addr: String) -> Result<(), JsValue> {
 }
 
 #[wasm_bindgen]
-pub async fn miwear_get_connected_devices() -> Result<JsValue, JsValue> {
+pub async fn device_get_connected_devices() -> Result<JsValue, JsValue> {
     ensure_core_initialized();
     let devices = corelib::ecs::with_rt_mut(|rt| {
         rt.device_ids()
             .filter_map(|device_id| {
-                rt.component_ref::<XiaomiDevice>(device_id)
+                rt.component_ref::<Device>(device_id)
                     .map(|dev| DeviceConnectionInfo {
                         name: dev.name().to_string(),
                         addr: dev.addr().to_string(),
@@ -294,7 +303,7 @@ where
 }
 
 #[wasm_bindgen]
-pub async fn miwear_get_data(addr: String, data_type: String) -> Result<JsValue, JsValue> {
+pub async fn device_get_data(addr: String, data_type: String) -> Result<JsValue, JsValue> {
     ensure_core_initialized();
     let lower = data_type.to_ascii_lowercase();
     match lower.as_str() {
@@ -326,7 +335,7 @@ pub async fn miwear_get_data(addr: String, data_type: String) -> Result<JsValue,
 }
 
 #[wasm_bindgen]
-pub async fn miwear_install(
+pub async fn device_install(
     addr: String,
     res_type: u8,
     data: Uint8Array,
@@ -370,7 +379,7 @@ pub async fn miwear_install(
                     }
                     Err(err) => {
                         web_sys::console::error_1(&JsValue::from_str(&format!(
-                            "[wasm] miwear_install progress serialization failed: {}",
+                            "[wasm] device_install progress serialization failed: {}",
                             err
                         )));
                     }
@@ -390,7 +399,7 @@ pub async fn miwear_install(
 }
 
 #[wasm_bindgen]
-pub async fn miwear_get_file_type(file: Uint8Array, name: String) -> u8 {
+pub async fn device_get_file_type(file: Uint8Array, name: String) -> u8 {
     let file_type = get_file_type(&file.to_vec());
     if file_type == FileType::Zip {
         // 检查扩展名 abp
