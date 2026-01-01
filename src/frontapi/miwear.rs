@@ -1,19 +1,15 @@
 use async_channel::unbounded;
 use corelib::device::DeviceConnectionInfo;
 use corelib::device::xiaomi::XiaomiDevice;
-use corelib::device::xiaomi::components::info::{InfoComponent, InfoSystem};
-use corelib::device::xiaomi::components::install::{InstallComponent, InstallSystem};
+use corelib::device::xiaomi::components::info::InfoSystem;
+use corelib::device::xiaomi::components::install::InstallSystem;
 use corelib::device::xiaomi::components::mass::SendMassCallbackData;
 use corelib::device::xiaomi::components::resource::{ResourceComponent, ResourceSystem};
-use corelib::device::xiaomi::components::thirdparty_app::{
-    ThirdpartyAppComponent, ThirdpartyAppSystem,
-};
-use corelib::device::xiaomi::components::watchface::{WatchfaceComponent, WatchfaceSystem};
+use corelib::device::xiaomi::components::thirdparty_app::ThirdpartyAppSystem;
+use corelib::device::xiaomi::components::watchface::WatchfaceSystem;
 use corelib::device::xiaomi::packet::mass::MassDataType;
 use corelib::device::xiaomi::resutils::{FileType, get_file_type};
 use corelib::device::xiaomi::r#type::ConnectType;
-use corelib::ecs::entity::EntityExt;
-use corelib::ecs::logic_component::LogicComponent;
 use js_sys::{Function, Uint8Array};
 use once_cell::sync::OnceCell;
 use serde_wasm_bindgen::to_value as to_js_value;
@@ -65,12 +61,12 @@ async fn remove_device_and_get_info(addr: &str) -> Option<DeviceConnectionInfo> 
     let owned = addr.to_string();
     corelib::ecs::with_rt_mut(move |rt| {
         let info =
-            rt.find_entity_by_id_mut::<XiaomiDevice>(&owned)
+            rt.component_ref::<XiaomiDevice>(&owned)
                 .map(|dev| DeviceConnectionInfo {
                     name: dev.name().to_string(),
                     addr: dev.addr().to_string(),
                 });
-        rt.remove_entity_by_id(&owned);
+        rt.remove_device(&owned);
         info
     })
     .await
@@ -174,12 +170,13 @@ pub async fn miwear_disconnect(addr: String) -> Result<(), JsValue> {
 pub async fn miwear_get_connected_devices() -> Result<JsValue, JsValue> {
     ensure_core_initialized();
     let devices = corelib::ecs::with_rt_mut(|rt| {
-        rt.entities
-            .values()
-            .filter_map(|entity| entity.as_any().downcast_ref::<XiaomiDevice>())
-            .map(|dev| DeviceConnectionInfo {
-                name: dev.name().to_string(),
-                addr: dev.addr().to_string(),
+        rt.device_ids()
+            .filter_map(|device_id| {
+                rt.component_ref::<XiaomiDevice>(device_id)
+                    .map(|dev| DeviceConnectionInfo {
+                        name: dev.name().to_string(),
+                        addr: dev.addr().to_string(),
+                    })
             })
             .collect::<Vec<_>>()
     })
@@ -195,18 +192,31 @@ where
 {
     let owned = addr.to_string();
     corelib::ecs::with_rt_mut(move |rt| {
-        let device = rt
-            .find_entity_by_id_mut::<XiaomiDevice>(&owned)
-            .ok_or_else(|| "Device not found".to_string())?;
-        let component = device
-            .get_component_as_mut::<InfoComponent>(InfoComponent::ID)
-            .map_err(|err| format!("{:?}", err))?;
-        let system = component
-            .system_mut()
-            .as_any_mut()
-            .downcast_mut::<InfoSystem>()
-            .ok_or_else(|| "Info system not found".to_string())?;
-        f(system)
+        rt.with_device_mut(&owned, |world, entity| {
+            let mut system = world
+                .get_mut::<InfoSystem>(entity)
+                .ok_or_else(|| "Info system not found".to_string())?;
+            f(&mut system)
+        })
+        .ok_or_else(|| "Device not found".to_string())?
+    })
+    .await
+}
+
+pub(super) async fn with_install_system<F, R>(addr: &str, f: F) -> Result<R, String>
+where
+    F: FnOnce(&mut InstallSystem) -> Result<R, String> + 'static,
+    R: 'static,
+{
+    let owned = addr.to_string();
+    corelib::ecs::with_rt_mut(move |rt| {
+        rt.with_device_mut(&owned, |world, entity| {
+            let mut system = world
+                .get_mut::<InstallSystem>(entity)
+                .ok_or_else(|| "Install system not found".to_string())?;
+            f(&mut system)
+        })
+        .ok_or_else(|| "Device not found".to_string())?
     })
     .await
 }
@@ -218,18 +228,13 @@ where
 {
     let owned = addr.to_string();
     corelib::ecs::with_rt_mut(move |rt| {
-        let device = rt
-            .find_entity_by_id_mut::<XiaomiDevice>(&owned)
-            .ok_or_else(|| "Device not found".to_string())?;
-        let component = device
-            .get_component_as_mut::<ResourceComponent>(ResourceComponent::ID)
-            .map_err(|err| format!("{:?}", err))?;
-        let system = component
-            .system_mut()
-            .as_any_mut()
-            .downcast_mut::<ResourceSystem>()
-            .ok_or_else(|| "Resource system not found".to_string())?;
-        f(system)
+        rt.with_device_mut(&owned, |world, entity| {
+            let mut system = world
+                .get_mut::<ResourceSystem>(entity)
+                .ok_or_else(|| "Resource system not found".to_string())?;
+            f(&mut system)
+        })
+        .ok_or_else(|| "Device not found".to_string())?
     })
     .await
 }
@@ -241,13 +246,13 @@ where
 {
     let owned = addr.to_string();
     corelib::ecs::with_rt_mut(move |rt| {
-        let device = rt
-            .find_entity_by_id_mut::<XiaomiDevice>(&owned)
-            .ok_or_else(|| "Device not found".to_string())?;
-        let component = device
-            .get_component_as_mut::<ResourceComponent>(ResourceComponent::ID)
-            .map_err(|err| format!("{:?}", err))?;
-        f(&*component)
+        rt.with_device_mut(&owned, |world, entity| {
+            let component = world
+                .get::<ResourceComponent>(entity)
+                .ok_or_else(|| "Resource component not found".to_string())?;
+            f(component)
+        })
+        .ok_or_else(|| "Device not found".to_string())?
     })
     .await
 }
@@ -259,18 +264,13 @@ where
 {
     let owned = addr.to_string();
     corelib::ecs::with_rt_mut(move |rt| {
-        let device = rt
-            .find_entity_by_id_mut::<XiaomiDevice>(&owned)
-            .ok_or_else(|| "Device not found".to_string())?;
-        let component = device
-            .get_component_as_mut::<WatchfaceComponent>(WatchfaceComponent::ID)
-            .map_err(|err| format!("{:?}", err))?;
-        let system = component
-            .system_mut()
-            .as_any_mut()
-            .downcast_mut::<WatchfaceSystem>()
-            .ok_or_else(|| "Watchface system not found".to_string())?;
-        f(system)
+        rt.with_device_mut(&owned, |world, entity| {
+            let mut system = world
+                .get_mut::<WatchfaceSystem>(entity)
+                .ok_or_else(|| "Watchface system not found".to_string())?;
+            f(&mut system)
+        })
+        .ok_or_else(|| "Device not found".to_string())?
     })
     .await
 }
@@ -282,18 +282,13 @@ where
 {
     let owned = addr.to_string();
     corelib::ecs::with_rt_mut(move |rt| {
-        let device = rt
-            .find_entity_by_id_mut::<XiaomiDevice>(&owned)
-            .ok_or_else(|| "Device not found".to_string())?;
-        let component = device
-            .get_component_as_mut::<ThirdpartyAppComponent>(ThirdpartyAppComponent::ID)
-            .map_err(|err| format!("{:?}", err))?;
-        let system = component
-            .system_mut()
-            .as_any_mut()
-            .downcast_mut::<ThirdpartyAppSystem>()
-            .ok_or_else(|| "Thirdparty app system not found".to_string())?;
-        f(system)
+        rt.with_device_mut(&owned, |world, entity| {
+            let mut system = world
+                .get_mut::<ThirdpartyAppSystem>(entity)
+                .ok_or_else(|| "Thirdparty app system not found".to_string())?;
+            f(&mut system)
+        })
+        .ok_or_else(|| "Device not found".to_string())?
     })
     .await
 }
@@ -352,16 +347,7 @@ pub async fn miwear_install(
     };
 
     let package_name_clone = package_name.clone();
-    let install_future = with_miwear_device_mut(&addr, move |device| {
-        let install_comp = device
-            .get_component_as_mut::<InstallComponent>(InstallComponent::ID)
-            .map_err(|err| format!("{:?}", err))?;
-        let install_sys = install_comp
-            .system_mut()
-            .as_any_mut()
-            .downcast_mut::<InstallSystem>()
-            .ok_or_else(|| "Install system not found".to_string())?;
-
+    let install_future = with_install_system(&addr, move |install_sys| {
         install_sys
             .send_install_request_with_progress(
                 data_type,
@@ -401,23 +387,6 @@ pub async fn miwear_install(
 
     drop(progress_tx);
     result
-}
-
-pub(super) async fn with_miwear_device_mut<F, R>(addr: &str, f: F) -> Result<R, String>
-where
-    F: FnOnce(&mut XiaomiDevice) -> Result<R, String> + 'static,
-    R: 'static,
-{
-    let owned = addr.to_string();
-
-    corelib::ecs::with_rt_mut(move |rt| {
-        if let Some(device) = rt.find_entity_by_id_mut::<XiaomiDevice>(&owned) {
-            f(device)
-        } else {
-            Err("Device not found".to_string())
-        }
-    })
-    .await
 }
 
 #[wasm_bindgen]
