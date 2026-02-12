@@ -341,6 +341,7 @@ pub async fn device_install(
     data: Uint8Array,
     package_name: Option<String>,
     progress_cb: Option<Function>,
+    watchface_id: Option<String>,
 ) -> Result<(), JsValue> {
     ensure_core_initialized();
 
@@ -363,6 +364,7 @@ pub async fn device_install(
                 file_data,
                 package_name_clone.as_deref(),
                 progress_notifier,
+                watchface_id.as_deref(),
             )
             .map_err(|err| format!("{:?}", err))
     })
