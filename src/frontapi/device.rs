@@ -1,5 +1,4 @@
 use async_channel::unbounded;
-use corelib::device::{cleanup_device_state, Device, DeviceConnectionInfo};
 use corelib::device::xiaomi::components::info::InfoSystem;
 use corelib::device::xiaomi::components::install::InstallSystem;
 use corelib::device::xiaomi::components::mass::SendMassCallbackData;
@@ -9,6 +8,7 @@ use corelib::device::xiaomi::components::watchface::WatchfaceSystem;
 use corelib::device::xiaomi::packet::mass::MassDataType;
 use corelib::device::xiaomi::resutils::{FileType, get_file_type};
 use corelib::device::xiaomi::r#type::ConnectType;
+use corelib::device::{Device, DeviceConnectionInfo, cleanup_device_state};
 use js_sys::{Function, Uint8Array};
 use once_cell::sync::OnceCell;
 use serde_wasm_bindgen::to_value as to_js_value;
