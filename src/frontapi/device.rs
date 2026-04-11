@@ -137,6 +137,7 @@ pub async fn device_connect(
     authkey: String,
     sar_version: u32,
     connect_type: String,
+    tx_win_overrun_allowance: u8,
 ) -> Result<JsValue, JsValue> {
     ensure_core_initialized();
 
@@ -151,7 +152,15 @@ pub async fn device_connect(
     });
 
     let device_info = session
-        .start(name, addr, authkey, sar_version, ct, disconnect_cb)
+        .start(
+            name,
+            addr,
+            authkey,
+            sar_version,
+            ct,
+            tx_win_overrun_allowance,
+            disconnect_cb,
+        )
         .await?;
 
     SESSIONS.with(|cell| {

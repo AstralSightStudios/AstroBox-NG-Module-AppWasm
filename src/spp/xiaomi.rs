@@ -101,6 +101,7 @@ impl XiaomiSpp {
         authkey: String,
         sar_version: u32,
         connect_type: ConnectType,
+        tx_win_overrun_allowance: u8,
         disconnect_cb: Rc<dyn Fn(String)>,
     ) -> Result<DeviceConnectionInfo, JsValue> {
         let readable: ReadableStream = self.port.readable();
@@ -189,6 +190,7 @@ impl XiaomiSpp {
             authkey,
             sar_version,
             connect_type,
+            Some(tx_win_overrun_allowance),
             false,
             {
                 let tx = tx.clone();
