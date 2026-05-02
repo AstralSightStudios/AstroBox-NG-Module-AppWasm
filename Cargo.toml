@@ -38,9 +38,7 @@ serde-wasm-bindgen = "0.6"
 once_cell = "1"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-getrandom = { version = "0.4", features = ["wasm_js"] }
-# aes-gcm 0.10 still depends on getrandom 0.2; this alias only enables its wasm JS backend.
-getrandom02 = { package = "getrandom", version = "0.2", features = ["js"] }
+getrandom = { version = "0.3", features = ["wasm_js"] }
 
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = false
