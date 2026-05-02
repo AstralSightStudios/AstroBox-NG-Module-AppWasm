@@ -191,14 +191,18 @@ impl XiaomiSpp {
             sar_version,
             connect_type,
             Some(tx_win_overrun_allowance),
+            None,
+            None,
             false,
             {
                 let tx = tx.clone();
-                move |data: Vec<u8>| {
+                move |data: Vec<Vec<u8>>| {
                     let tx = tx.clone();
                     async move {
                         //log::info!("[wasm] Send: {}", corelib::tools::to_hex_string(&data));
-                        let _ = tx.send(data).await;
+                        for chunk in data {
+                            let _ = tx.send(chunk).await;
+                        }
                         Ok(())
                     }
                 }
