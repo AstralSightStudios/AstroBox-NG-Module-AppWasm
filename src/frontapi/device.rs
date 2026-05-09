@@ -8,7 +8,7 @@ use corelib::device::xiaomi::components::watchface::WatchfaceSystem;
 use corelib::device::xiaomi::packet::mass::MassDataType;
 use corelib::device::xiaomi::resutils::{FileType, get_file_type};
 use corelib::device::xiaomi::r#type::ConnectType;
-use corelib::device::{Device, DeviceConnectionInfo, cleanup_device_state};
+use corelib::device::{Device, DeviceConnectionInfo, DeviceKind, cleanup_device_state};
 use js_sys::{Function, Uint8Array};
 use once_cell::sync::OnceCell;
 use serde_wasm_bindgen::to_value as to_js_value;
@@ -64,6 +64,7 @@ async fn remove_device_and_get_info(addr: &str) -> Option<DeviceConnectionInfo> 
                 DeviceConnectionInfo {
                     name: dev.name().to_string(),
                     addr: dev.addr().to_string(),
+                    kind: dev.kind(),
                 },
                 dev.kind(),
             )
@@ -87,6 +88,7 @@ async fn notify_disconnected(addr: String) {
         .unwrap_or(DeviceConnectionInfo {
             name: String::new(),
             addr: addr.clone(),
+            kind: DeviceKind::Xiaomi,
         });
     if let Ok(payload) = to_js_value(&info) {
         emit_event("device-disconnected", &payload);
@@ -194,6 +196,7 @@ pub async fn device_get_connected_devices() -> Result<JsValue, JsValue> {
                     .map(|dev| DeviceConnectionInfo {
                         name: dev.name().to_string(),
                         addr: dev.addr().to_string(),
+                        kind: dev.kind(),
                     })
             })
             .collect::<Vec<_>>()
