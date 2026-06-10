@@ -421,6 +421,9 @@ pub async fn device_get_file_type(file: Uint8Array, name: String) -> u8 {
             if ext == "abp" {
                 return FileType::Abp as u8;
             }
+            if ext == "mwz" {
+                return FileType::WatchFace as u8;
+            }
         }
     }
 
