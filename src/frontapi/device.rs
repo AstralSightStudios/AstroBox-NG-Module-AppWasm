@@ -14,6 +14,7 @@ use once_cell::sync::OnceCell;
 use serde_wasm_bindgen::to_value as to_js_value;
 use std::sync::Arc;
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{io::Cursor, io::Read};
 use tokio::sync::oneshot;
 use wasm_bindgen::JsValue;
 use wasm_bindgen::prelude::*;
@@ -23,6 +24,9 @@ use crate::spp::xiaomi::XiaomiSpp;
 
 pub mod thirdparty_app;
 pub mod watchface;
+
+const DAMAGED_WATCHFACE_ID_PREFIX: &str = "1209";
+const DAMAGED_WATCHFACE_ERROR: &str = "表盘已损坏";
 
 static CORE_INIT: OnceCell<()> = OnceCell::new();
 
@@ -37,6 +41,52 @@ pub(super) fn ensure_core_initialized() {
         corelib::logger::wasm::init_logger();
         corelib::ecs::init_runtime_default();
     });
+}
+
+fn extract_install_watchface_bin(data: &[u8]) -> Option<Vec<u8>> {
+    let mut archive = zip::ZipArchive::new(Cursor::new(data)).ok()?;
+    let mut root_bin = None;
+    let mut any_bin = None;
+
+    for index in 0..archive.len() {
+        let entry = archive.by_index(index).ok()?;
+        if entry.is_dir() {
+            continue;
+        }
+        let name = entry.name().to_ascii_lowercase();
+        if !name.ends_with(".bin") {
+            continue;
+        }
+        if !name.contains('/') {
+            root_bin.get_or_insert(index);
+        }
+        any_bin.get_or_insert(index);
+    }
+
+    let index = root_bin.or(any_bin)?;
+    let mut entry = archive.by_index(index).ok()?;
+    let mut output = Vec::with_capacity(entry.size() as usize);
+    entry.read_to_end(&mut output).ok()?;
+    Some(output)
+}
+
+async fn resolve_install_watchface_id(addr: &str, file_data: &[u8]) -> Option<String> {
+    let install_data =
+        extract_install_watchface_bin(file_data).unwrap_or_else(|| file_data.to_vec());
+    corelib::device::watchface::resolve_xiaomi_watchface_id(addr.to_string(), install_data)
+        .await
+        .ok()
+        .flatten()
+}
+
+fn ensure_watchface_is_not_damaged(watchface_id: Option<&str>) -> Result<(), JsValue> {
+    if watchface_id
+        .map(str::trim)
+        .is_some_and(|id| id.starts_with(DAMAGED_WATCHFACE_ID_PREFIX))
+    {
+        return Err(JsValue::from_str(DAMAGED_WATCHFACE_ERROR));
+    }
+    Ok(())
 }
 
 fn emit_event(event: &str, payload: &JsValue) {
@@ -347,6 +397,15 @@ pub async fn device_get_data(addr: String, data_type: String) -> Result<JsValue,
 }
 
 #[wasm_bindgen]
+pub async fn device_get_watchface_id(
+    addr: String,
+    data: Uint8Array,
+) -> Result<Option<String>, JsValue> {
+    ensure_core_initialized();
+    Ok(resolve_install_watchface_id(&addr, &data.to_vec()).await)
+}
+
+#[wasm_bindgen]
 pub async fn device_install(
     addr: String,
     res_type: u8,
@@ -359,6 +418,10 @@ pub async fn device_install(
 
     let data_type = MassDataType::try_from(res_type).map_err(|err| JsValue::from_str(err))?;
     let file_data = data.to_vec();
+    if data_type == MassDataType::Watchface {
+        let source_id = resolve_install_watchface_id(&addr, &file_data).await;
+        ensure_watchface_is_not_damaged(source_id.as_deref())?;
+    }
 
     let (progress_tx, progress_rx) = unbounded::<SendMassCallbackData>();
     let progress_notifier = {
